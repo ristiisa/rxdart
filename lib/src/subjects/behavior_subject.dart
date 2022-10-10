@@ -135,13 +135,15 @@ class BehaviorSubject<T> extends Subject<T> implements ValueStream<T> {
   ValueStream<T> get stream => _BehaviorSubjectStream(this);
 
   @override
-  bool get hasValue => isNotEmpty(_wrapper.value);
+  bool get hasValue => null is T ? _wrapper.value != null && !identical(_wrapper.value, EMPTY): isNotEmpty(_wrapper.value);
 
   @override
   T get value {
     final value = _wrapper.value;
-    if (isNotEmpty(value)) {
+    if (isNotEmpty(value) || null is T) {
       return value as T;
+    } else if(null is T) {
+      return valueOrNull as T;
     }
     throw ValueStreamError.hasNoValue();
   }
@@ -249,4 +251,128 @@ class _BehaviorSubjectStream<T> extends Stream<T> implements ValueStream<T> {
 
   @override
   T? get valueOrNull => _subject.valueOrNull;
+}
+
+class NullableBehaviorSubject<T> extends Subject<T> implements ValueStream<T> {
+  final _Wrapper<T> _wrapper;
+
+  NullableBehaviorSubject._(
+    StreamController<T> controller,
+    Stream<T> stream,
+    this._wrapper,
+  ) : super(controller, stream);
+
+  /// Constructs a [BehaviorSubject], optionally pass handlers for
+  /// [onListen], [onCancel] and a flag to handle events [sync].
+  ///
+  /// See also [StreamController.broadcast]
+  factory NullableBehaviorSubject({
+    void Function()? onListen,
+    void Function()? onCancel,
+    bool sync = false,
+  }) {
+    // ignore: close_sinks
+    final controller = StreamController<T>.broadcast(
+      onListen: onListen,
+      onCancel: onCancel,
+      sync: sync,
+    );
+
+    final wrapper = _Wrapper<T>();
+
+    return NullableBehaviorSubject<T>._(
+        controller,
+        Rx.defer<T>(_deferStream(wrapper, controller, sync), reusable: true),
+        wrapper);
+  }
+
+  /// Constructs a [NullableBehaviorSubject], optionally pass handlers for
+  /// [onListen], [onCancel] and a flag to handle events [sync].
+  ///
+  /// [seedValue] becomes the current [value] and is emitted immediately.
+  ///
+  /// See also [StreamController.broadcast]
+  factory NullableBehaviorSubject.seeded(
+    T seedValue, {
+    void Function()? onListen,
+    void Function()? onCancel,
+    bool sync = false,
+  }) {
+    // ignore: close_sinks
+    final controller = StreamController<T>.broadcast(
+      onListen: onListen,
+      onCancel: onCancel,
+      sync: sync,
+    );
+
+    final wrapper = _Wrapper<T>.seeded(seedValue);
+
+    return NullableBehaviorSubject<T>._(
+      controller,
+      Rx.defer<T>(_deferStream(wrapper, controller, sync), reusable: true),
+      wrapper,
+    );
+  }
+
+  static Stream<T> Function() _deferStream<T>(
+          _Wrapper<T> wrapper, StreamController<T> controller, bool sync) =>
+      () {
+        final errorAndStackTrace = wrapper.errorAndStackTrace;
+        if (errorAndStackTrace != null && !wrapper.isValue) {
+          return controller.stream.transform(
+            StartWithErrorStreamTransformer(
+              errorAndStackTrace.error,
+              errorAndStackTrace.stackTrace,
+            ),
+          );
+        }
+
+        final value = wrapper.value;
+        if (isNotEmpty(value) && wrapper.isValue) {
+          return controller.stream
+              .transform(StartWithStreamTransformer(value as T));
+        }
+
+        return controller.stream;
+      };
+
+  @override
+  void onAdd(T event) => _wrapper.setValue(event);
+
+  @override
+  void onAddError(Object error, [StackTrace? stackTrace]) =>
+      _wrapper.setError(error, stackTrace);
+
+  @override
+  ValueStream<T> get stream => this;
+
+  @override
+  bool get hasValue => valueOrNull != null;
+
+  @override
+  T get value => valueOrNull as T;
+
+  @override
+  T? get valueOrNull => unbox(_wrapper.value);
+
+  /// Set and emit the new value.
+  set value(T newValue) => add(newValue as T);
+
+  @override
+  bool get hasError => _wrapper.errorAndStackTrace != null;
+
+  @override
+  Object? get errorOrNull => _wrapper.errorAndStackTrace?.error;
+
+  @override
+  Object get error {
+    final errorAndSt = _wrapper.errorAndStackTrace;
+    if (errorAndSt != null) {
+      return errorAndSt.error;
+    }
+    throw ValueStreamError.hasNoError();
+  }
+
+  @override
+  StackTrace? get stackTrace => _wrapper.errorAndStackTrace?.stackTrace;
 }
